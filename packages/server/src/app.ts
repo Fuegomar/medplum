@@ -15,7 +15,7 @@ import { getConfig } from './config/loader';
 import { MedplumServerConfig } from './config/types';
 import { attachRequestContext, AuthenticatedRequestContext, closeRequestContext, getRequestContext } from './context';
 import { corsOptions } from './cors';
-import { closeDatabase, initDatabase } from './database';
+import { closeDatabase, initDatabase, maybeAutoRunPendingPostDeployMigrationOnShards } from './database';
 import { dicomRouter } from './dicom/routes';
 import { emailRouter } from './email/routes';
 import { binaryRouter } from './fhir/binary';
@@ -29,7 +29,6 @@ import { hl7BodyParser } from './hl7/parser';
 import { keyValueRouter } from './keyvalue/routes';
 import { getLogger, globalLogger } from './logger';
 import { mcpRouter } from './mcp/routes';
-import { maybeAutoRunPendingPostDeployMigration } from './migrations/migration-utils';
 import { initKeys } from './oauth/keys';
 import { authenticateRequest } from './oauth/middleware';
 import { oauthRouter } from './oauth/routes';
@@ -39,7 +38,7 @@ import { closeRateLimiter, rateLimitHandler } from './ratelimit';
 import { closeRedis, initRedis } from './redis';
 import { requestContextStore } from './request-context-store';
 import { scimRouter } from './scim/routes';
-import { seedDatabase } from './seed';
+import { seedDatabases } from './seed';
 import { initServerRegistryHeartbeatListener } from './server-registry';
 import { initBinaryStorage } from './storage/loader';
 import { storageRouter } from './storage/routes';
@@ -217,14 +216,14 @@ export function initAppServices(config: MedplumServerConfig): Promise<void> {
 
   return requestContextStore.run(AuthenticatedRequestContext.system(), async () => {
     await initDatabase(config);
-    await seedDatabase();
+    await seedDatabases();
     await initKeys(config);
     initBinaryStorage(config.binaryStorage);
     initWorkers(config);
     initHeartbeat(config);
     initOtelHeartbeat();
     initServerRegistryHeartbeatListener();
-    await maybeAutoRunPendingPostDeployMigration();
+    await maybeAutoRunPendingPostDeployMigrationOnShards();
   });
 }
 

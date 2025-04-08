@@ -43,6 +43,16 @@ export function addDefaults(config: MedplumServerConfig): ServerConfig {
   config.defaultAuthRateLimit ??= 160;
 
   config.defaultFhirQuota ??= 50_000;
+  config.shards = config.shards ?? {};
+  config.shards.global = {
+    name: 'global',
+    database: config.database,
+    redis: config.redis,
+  };
+  for (const [shardName, shardConfig] of Object.entries(config.shards)) {
+    shardConfig.name = shardName;
+  }
+
   return config as ServerConfig;
 }
 

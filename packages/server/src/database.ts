@@ -1,6 +1,7 @@
 import { sleep } from '@medplum/core';
 import { Pool, PoolClient } from 'pg';
 import * as semver from 'semver';
+import { getConfig } from './config/loader';
 import { MedplumDatabaseConfig, MedplumServerConfig } from './config/types';
 import { globalLogger } from './logger';
 import { getPostDeployVersion, getPreDeployVersion } from './migration-sql';
@@ -9,6 +10,7 @@ import {
   getPendingPostDeployMigration,
   getPostDeployManifestEntry,
   getPreDeployMigration,
+  maybeAutoRunPendingPostDeployMigration,
 } from './migrations/migration-utils';
 import { getPreDeployMigrationVersions, MigrationVersion } from './migrations/migration-versions';
 import { getServerVersion } from './util/version';
@@ -25,16 +27,18 @@ const globalPools: { pool: Pool | undefined; readonlyPool: Pool | undefined } = 
 };
 const shardPools: Record<string, { pool: Pool | undefined; readonlyPool: Pool | undefined }> = {};
 
-export function getDatabasePool(mode: DatabaseMode): Pool {
-  if (!globalPools.pool) {
+export function getDatabasePool(mode: DatabaseMode, shardName?: string): Pool {
+  const pools = shardName ? shardPools[shardName] : globalPools;
+
+  if (!pools.pool) {
     throw new Error('Database not setup');
   }
 
-  if (mode === DatabaseMode.READER && globalPools.readonlyPool) {
-    return globalPools.readonlyPool;
+  if (mode === DatabaseMode.READER && pools.readonlyPool) {
+    return pools.readonlyPool;
   }
 
-  return globalPools.pool;
+  return pools.pool;
 }
 
 export const locks = {
@@ -53,7 +57,7 @@ export async function initDatabase(serverConfig: MedplumServerConfig): Promise<v
     await runMigrations(globalPools.pool);
   }
 
-  for (const [shardName, shardConfig] of Object.entries(serverConfig.shards ?? {})) {
+  for (const [shardName, shardConfig] of Object.entries(serverConfig.shards)) {
     const shardPool = await initPool(shardConfig.database, undefined);
     shardPools[shardName] = {
       pool: shardPool,
@@ -239,5 +243,11 @@ async function runAllPendingPreDeployMigrations(client: PoolClient, currentVersi
       globalLogger.info('Database pre-deploy migration', { version: `v${i}`, duration: `${Date.now() - start} ms` });
       await client.query('UPDATE "DatabaseMigration" SET "version"=$1 WHERE "id" = 1', [i]);
     }
+  }
+}
+
+export async function maybeAutoRunPendingPostDeployMigrationOnShards(): Promise<void> {
+  for (const shardConfig of Object.values(getConfig().shards)) {
+    await maybeAutoRunPendingPostDeployMigration(shardConfig);
   }
 }

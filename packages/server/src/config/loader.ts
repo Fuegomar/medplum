@@ -56,7 +56,12 @@ export async function loadConfig(configName: string): Promise<MedplumServerConfi
     throw new Error('Missing required config setting: baseUrl. Please set "baseUrl" in your configuration.');
   }
 
+  if (config.shards?.global) {
+    throw new Error('Shard name "global" is reserved');
+  }
+
   cachedConfig = addDefaults(config);
+
   return cachedConfig;
 }
 

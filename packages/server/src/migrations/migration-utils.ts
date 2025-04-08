@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Pool, PoolClient } from 'pg';
 import { getConfig } from '../config/loader';
+import { MedplumShardConfig } from '../config/types';
 import { DatabaseMode, getDatabasePool } from '../database';
 import { getSystemRepo, Repository } from '../fhir/repo';
 import { globalLogger } from '../logger';
@@ -166,7 +167,7 @@ export async function queuePostDeployMigration(systemRepo: Repository, version: 
   // picked up before the transaction was committed.
   // globalLogger.info('Adding post-deploy migration job', { version, asyncJob: getReferenceString(asyncJob) });
   const jobData = migration.prepareJobData(asyncJob);
-  const result = await addPostDeployMigrationJobData(jobData);
+  const result = await addPostDeployMigrationJobData(systemRepo, jobData);
   if (!result) {
     globalLogger.error('Unable to add post-deploy migration job', {
       version,
@@ -190,10 +191,14 @@ export async function withLongRunningDatabaseClient<TResult>(
   }
 }
 
-export async function maybeAutoRunPendingPostDeployMigration(): Promise<WithId<AsyncJob> | undefined> {
-  const config = getConfig();
-  const isDisabled = config.database.runMigrations === false || config.database.disableRunPostDeployMigrations;
-  const pendingPostDeployMigration = await getPendingPostDeployMigration(getDatabasePool(DatabaseMode.WRITER));
+export async function maybeAutoRunPendingPostDeployMigration(
+  sharedConfig: MedplumShardConfig
+): Promise<WithId<AsyncJob> | undefined> {
+  const isDisabled =
+    sharedConfig.database.runMigrations === false || sharedConfig.database.disableRunPostDeployMigrations;
+  const pendingPostDeployMigration = await getPendingPostDeployMigration(
+    getDatabasePool(DatabaseMode.WRITER, sharedConfig.name)
+  );
 
   if (!isDisabled && pendingPostDeployMigration === MigrationVersion.UNKNOWN) {
     //throwing here seems extreme since it stops the server from starting
@@ -208,13 +213,17 @@ export async function maybeAutoRunPendingPostDeployMigration(): Promise<WithId<A
 
   if (isDisabled) {
     globalLogger.info('Not auto-queueing pending post-deploy migration because auto-run is disabled', {
+      shard: sharedConfig.name,
       version: `v${pendingPostDeployMigration}`,
     });
     return undefined;
   }
 
   const systemRepo = getSystemRepo();
-  globalLogger.debug('Auto-queueing pending post-deploy migration', { version: `v${pendingPostDeployMigration}` });
+  globalLogger.debug('Auto-queueing pending post-deploy migration', {
+    shard: sharedConfig.name,
+    version: `v${pendingPostDeployMigration}`,
+  });
   return queuePostDeployMigration(systemRepo, pendingPostDeployMigration);
 }
 
