@@ -18,6 +18,7 @@ import { BotsPage } from './admin/BotsPage';
 import { ClientsPage } from './admin/ClientsPage';
 import { CreateBotPage } from './admin/CreateBotPage';
 import { CreateClientPage } from './admin/CreateClientPage';
+import { DatabaseConfigPage } from './admin/DatabaseConfigPage';
 import { EditMembershipPage } from './admin/EditMembershipPage';
 import { InvitePage } from './admin/InvitePage';
 import { PatientsPage } from './admin/PatientsPage';
@@ -56,7 +57,6 @@ import { ResourceVersionPage } from './resource/ResourceVersionPage';
 import { SubscriptionsPage } from './resource/SubscriptionsPage';
 import { TimelinePage } from './resource/TimelinePage';
 import { ToolsPage } from './resource/ToolsPage';
-import { DatabaseConfigPage } from './admin/DatabaseConfigPage';
 
 export function AppRoutes(): JSX.Element {
   return (
