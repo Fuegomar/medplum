@@ -73,7 +73,6 @@ import { getConfig } from '../config/loader';
 import { r4ProjectId } from '../constants';
 import { tryGetRequestContext } from '../context';
 import { DatabaseMode, getDatabasePool } from '../database';
-import { FhirRateLimiter } from '../fhirquota';
 import { getLogger } from '../logger';
 import { incrementCounter, recordHistogramValue } from '../otel/otel';
 import { getRedis } from '../redis';
@@ -96,6 +95,7 @@ import {
 import { patchObject } from '../util/patch';
 import { addBackgroundJobs } from '../workers';
 import { addSubscriptionJobs } from '../workers/subscription';
+import { FhirRateLimiter } from './fhirquota';
 import { validateResourceWithJsonSchema } from './jsonschema';
 import { TokenTable } from './lookups/token';
 import { getStandardAndDerivedSearchParameters } from './lookups/util';
