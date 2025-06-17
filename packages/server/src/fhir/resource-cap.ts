@@ -13,6 +13,8 @@ export class ResourceCap {
   private readonly enabled: boolean;
   private readonly logger: Logger;
 
+  private initPromise?: Promise<void>;
+
   constructor(redis: Redis, authState: AuthState, projectLimit: number, logger: Logger) {
     this.limiter = new RateLimiterRedis({
       keyPrefix: 'medplum:resource-cap:',
@@ -27,19 +29,18 @@ export class ResourceCap {
   }
 
   private async init(): Promise<void> {
-    console.log('INIT', this.projectKey);
     let currentStatus = await this.limiter.get(this.projectKey);
     if (!currentStatus) {
       // TODO: Fetch from DB
       const count = 0;
       currentStatus = await this.limiter.set(this.projectKey, count, ONE_DAY);
-      console.log('SETTING STATE', currentStatus);
     }
     this.setState(currentStatus);
   }
 
   private setState(result: RateLimiterRes): void {
     this.current = result;
+    this.initPromise = undefined;
   }
 
   /**
@@ -48,16 +49,15 @@ export class ResourceCap {
    */
   async consume(points: number): Promise<void> {
     if (!this.current) {
-      await this.init();
+      this.initPromise ??= this.init();
+      await this.initPromise;
     } else if (this.current.remainingPoints <= 0 && this.enabled) {
       // If user is already over the limit, just block them
-      console.log('Already over limit', this.current);
       throw new OperationOutcomeError(businessRule('resource-cap', 'Resource cap exceeded'));
     }
 
     try {
       const result = await this.limiter.consume(this.projectKey, points);
-      console.log('Consumed', result);
       this.setState(result);
     } catch (err: unknown) {
       if (err instanceof Error && this.enabled) {
@@ -71,7 +71,6 @@ export class ResourceCap {
         enabled: this.enabled,
       });
       if (this.enabled) {
-        console.log('Went over cap!', result);
         throw new OperationOutcomeError(businessRule('resource-cap', 'Resource cap exceeded'));
       }
     }
@@ -82,9 +81,9 @@ export class ResourceCap {
   }
 
   async deleted(num = 1): Promise<void> {
-    console.log('Deleting!');
     if (!this.current) {
-      await this.init();
+      this.initPromise ??= this.init();
+      await this.initPromise;
     }
 
     const result = await this.limiter.reward(this.projectKey, Math.max(num, 1));
