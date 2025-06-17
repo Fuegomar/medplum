@@ -1,7 +1,9 @@
-import { businessRule, Logger, OperationOutcomeError } from '@medplum/core';
+import { businessRule, getResourceTypes, Logger, OperationOutcomeError } from '@medplum/core';
 import Redis from 'ioredis';
 import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
+import { DatabaseMode, getDatabasePool } from '../database';
 import { AuthState } from '../oauth/middleware';
+import { SelectQuery, Union } from './sql';
 
 const ONE_DAY = 60 * 60 * 24;
 
@@ -31,9 +33,13 @@ export class ResourceCap {
   private async init(): Promise<void> {
     let currentStatus = await this.limiter.get(this.projectKey);
     if (!currentStatus) {
-      // TODO: Fetch from DB
-      const count = 0;
-      currentStatus = await this.limiter.set(this.projectKey, count, ONE_DAY);
+      const subqueries = getResourceTypes().map((rt) =>
+        new SelectQuery(rt).raw(`COUNT(*)::int as "count"`).where('projectId', '=', this.projectKey)
+      );
+      const query = new SelectQuery('combined', new Union(...subqueries)).column('count');
+      const tableCounts = await query.execute(getDatabasePool(DatabaseMode.READER));
+      const totalCount = tableCounts.reduce((sum, row) => sum + row.count, 0);
+      currentStatus = await this.limiter.set(this.projectKey, totalCount, ONE_DAY);
     }
     this.setState(currentStatus);
   }
