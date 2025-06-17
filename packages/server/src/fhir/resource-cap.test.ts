@@ -7,7 +7,7 @@ import { getRedis } from '../redis';
 import { createTestProject } from '../test.setup';
 import { getSystemRepo } from './repo';
 
-describe('FHIR Rate Limits', () => {
+describe('FHIR Resource Limits', () => {
   let app: Express;
   let config: MedplumServerConfig;
 
@@ -33,7 +33,7 @@ describe('FHIR Rate Limits', () => {
       project: {
         systemSetting: [
           { name: 'enableResourceCap', valueBoolean: true },
-          { name: 'resourceCap', valueInteger: 2 },
+          { name: 'resourceCap', valueInteger: 3 },
         ],
       },
     });

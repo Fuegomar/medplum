@@ -70,7 +70,7 @@ import { Pool, PoolClient } from 'pg';
 import { Operation } from 'rfc6902';
 import { v7 } from 'uuid';
 import { getConfig } from '../config/loader';
-import { r4ProjectId } from '../constants';
+import { syntheticR4Project } from '../constants';
 import { AuthenticatedRequestContext, tryGetRequestContext } from '../context';
 import { DatabaseMode, getDatabasePool } from '../database';
 import { getLogger } from '../logger';
@@ -155,7 +155,7 @@ export interface RepositoryContext {
    * The user's "primary" Project will be the first element in the array (i.e. projects[0])
    * This value will be included in every resource as meta.project.
    */
-  projects?: string[];
+  projects?: WithId<Project>[];
 
   /** Current Project of the authenticated user, or none for the system repository. */
   currentProject?: WithId<Project>;
@@ -246,7 +246,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
   constructor(context: RepositoryContext, conn?: PoolClient) {
     super();
     this.context = context;
-    this.context.projects?.push?.(r4ProjectId);
+    this.context.projects?.push(syntheticR4Project);
     if (!this.context.author?.reference) {
       throw new Error('Invalid author reference');
     }
@@ -411,7 +411,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
   }
 
   private canReadCacheEntry(cacheEntry: CacheEntry): boolean {
-    if (!this.isSuperAdmin() && !this.context.projects?.includes(cacheEntry.projectId)) {
+    if (!this.isSuperAdmin() && !this.context.projects?.some((p) => p.id === cacheEntry.projectId)) {
       return false;
     }
     if (!satisfiedAccessPolicy(cacheEntry.resource, AccessPolicyInteraction.READ, this.context.accessPolicy)) {
@@ -420,10 +420,10 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
     return true;
   }
 
-  async readReferences<T extends Resource>(references: Reference<T>[]): Promise<(T | Error)[]> {
+  async readReferences<T extends Resource>(references: Reference<T>[]): Promise<(WithId<T> | Error)[]> {
     await this.rateLimiter()?.recordRead(references.length);
     const cacheEntries = await this.getCacheEntries(references);
-    const result: (T | Error)[] = new Array(references.length);
+    const result: (WithId<T> | Error)[] = new Array(references.length);
 
     for (let i = 0; i < result.length; i++) {
       const startTime = Date.now();
@@ -442,7 +442,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
         entryResult = this.removeHiddenFields(entryResult);
         this.logEvent(ReadInteraction, AuditEventOutcome.Success, undefined, { resource: entryResult, durationMs });
       }
-      result[i] = entryResult as T | Error;
+      result[i] = entryResult as WithId<T> | Error;
     }
 
     return result;
@@ -838,7 +838,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
 
     const issues = validateResource(resource);
     for (const issue of issues) {
-      logger.warn(`Validator warning: ${issue.details?.text}`, { project: this.context.projects?.[0], issue });
+      logger.warn(`Validator warning: ${issue.details?.text}`, { project: this.context.projects?.[0]?.id, issue });
     }
 
     const profileUrls = resource.meta?.profile;
@@ -882,11 +882,9 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
   }
 
   private async loadProfile(url: string): Promise<StructureDefinition | undefined> {
-    const projectIds = this.context.projects;
-
-    if (projectIds?.length) {
+    if (this.context.projects?.length) {
       // Try loading from cache, using all available Project IDs
-      const cacheKeys = projectIds.map((id) => getProfileCacheKey(id, url));
+      const cacheKeys = this.context.projects.map((p) => getProfileCacheKey(p.id, url));
       const results = await getRedis().mget(...cacheKeys);
       const cachedProfile = results.find(Boolean) as string | undefined;
       if (cachedProfile) {
@@ -916,7 +914,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
       ],
     });
 
-    if (projectIds?.length && profile) {
+    if (this.context.projects?.length && profile) {
       // Store loaded profile in cache
       await cacheProfile(profile);
     }
@@ -1347,7 +1345,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
   addSecurityFilters(builder: SelectQuery, resourceType: string): void {
     // No compartment restrictions for admins.
     if (!this.isSuperAdmin()) {
-      this.addProjectFilters(builder);
+      this.addProjectFilters(builder, resourceType);
     }
     this.addAccessPolicyFilters(builder, resourceType);
   }
@@ -1355,10 +1353,22 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
   /**
    * Adds the "project" filter to the select query.
    * @param builder - The select query builder.
+   * @param resourceType - The resource type being searched.
    */
-  private addProjectFilters(builder: SelectQuery): void {
+  private addProjectFilters(builder: SelectQuery, resourceType: string): void {
     if (this.context.projects?.length) {
-      builder.where('projectId', 'IN', this.context.projects);
+      const projectIds = [this.context.projects[0].id]; // Always include the first project
+      for (let i = 1; i < this.context.projects.length; i++) {
+        const project = this.context.projects[i];
+        if (
+          project.id === this.context.currentProject?.id || // Always include the current project (usually the same as the first project)
+          !project.exportedResourceType?.length || // Include projects that do not specify exported resource types
+          project.exportedResourceType?.includes(resourceType as ResourceType) // Include projects that export resourceType
+        ) {
+          projectIds.push(project.id);
+        }
+      }
+      builder.where('projectId', 'IN', projectIds);
     }
   }
 
@@ -1431,11 +1441,13 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
    *
    * 1. 02/27/25 - Added `__version` column (https://github.com/medplum/medplum/pull/6033)
    * 2. 04/09/25 - Added qualification-code search param for `Practitioner` (https://github.com/medplum/medplum/pull/6280)
-   * 3. 04/09/25 - Added columns for `token-column` search strategy (https://github.com/medplum/medplum/pull/6291)
+   * 3. 04/09/25 - Added __tokens column for `token-column` search strategy (https://github.com/medplum/medplum/pull/6291)
    * 4. 04/25/25 - Consider `resource.id` in lookup table batch reindex (https://github.com/medplum/medplum/pull/6479)
    * 5. 04/29/25 - Added `status` param for `Flag` resources (https://github.com/medplum/medplum/pull/6500)
+   * 6. 06/12/25 - Added columns per token search parameter (https://github.com/medplum/medplum/pull/6727)
+   *
    */
-  static readonly VERSION: number = 5;
+  static readonly VERSION: number = 6;
 
   private buildResourceRow(resource: Resource): Record<string, any> {
     const resourceType = resource.resourceType;
@@ -1951,7 +1963,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
       return submittedProjectId;
     }
 
-    return existing?.meta?.project ?? this.context.projects?.[0];
+    return existing?.meta?.project ?? this.context.projects?.[0]?.id;
   }
 
   /**
@@ -2123,7 +2135,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
       if (protectedResourceTypes.includes(resourceType)) {
         return false;
       }
-      if (resource.meta?.project !== this.context.projects?.[0]) {
+      if (resource.meta?.project !== this.context.projects?.[0]?.id) {
         return false;
       }
     }
@@ -2137,7 +2149,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
    * @returns True if the current user can write the specified resource type.
    */
   private isResourceWriteable(previous: Resource | undefined, current: Resource): boolean {
-    if (!this.isSuperAdmin() && current.meta?.project !== this.context.projects?.[0]) {
+    if (!this.isSuperAdmin() && current.meta?.project !== this.context.projects?.[0]?.id) {
       return false;
     }
 
@@ -2321,7 +2333,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
     const auditEvent = createAuditEvent(
       RestfulOperationType,
       subtype,
-      this.context.projects?.[0] as string,
+      this.context.projects?.[0]?.id as string,
       this.context.author,
       this.context.remoteAddress,
       outcome,

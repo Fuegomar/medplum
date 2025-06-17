@@ -1,4 +1,11 @@
-import { businessRule, getResourceTypes, Logger, OperationOutcomeError } from '@medplum/core';
+import {
+  businessRule,
+  getResourceTypes,
+  Logger,
+  OperationOutcomeError,
+  projectAdminResourceTypes,
+  protectedResourceTypes,
+} from '@medplum/core';
 import Redis from 'ioredis';
 import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import { DatabaseMode, getDatabasePool } from '../database';
@@ -6,6 +13,8 @@ import { AuthState } from '../oauth/middleware';
 import { SelectQuery, Union } from './sql';
 
 const ONE_DAY = 60 * 60 * 24;
+
+let countedResourceTypes: string[] | undefined;
 
 export class ResourceCap {
   private readonly limiter: RateLimiterRedis;
@@ -31,9 +40,15 @@ export class ResourceCap {
   }
 
   private async init(): Promise<void> {
+    if (!countedResourceTypes) {
+      countedResourceTypes = getResourceTypes().filter(
+        (rt) => !protectedResourceTypes.includes(rt) && !projectAdminResourceTypes.includes(rt)
+      );
+    }
+
     let currentStatus = await this.limiter.get(this.projectKey);
     if (!currentStatus) {
-      const subqueries = getResourceTypes().map((rt) =>
+      const subqueries = countedResourceTypes.map((rt) =>
         new SelectQuery(rt).raw(`COUNT(*)::int as "count"`).where('projectId', '=', this.projectKey)
       );
       const query = new SelectQuery('combined', new Union(...subqueries)).column('count');
