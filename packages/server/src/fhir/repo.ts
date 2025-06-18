@@ -1078,7 +1078,6 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
 
   async deleteResource<T extends Resource = Resource>(resourceType: T['resourceType'], id: string): Promise<void> {
     await this.rateLimiter()?.recordWrite();
-    await this.resourceCap()?.deleted();
 
     const startTime = Date.now();
     let resource: WithId<T>;

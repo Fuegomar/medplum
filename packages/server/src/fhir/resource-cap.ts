@@ -40,11 +40,9 @@ export class ResourceCap {
   }
 
   private async init(): Promise<void> {
-    if (!countedResourceTypes) {
-      countedResourceTypes = getResourceTypes().filter(
-        (rt) => !protectedResourceTypes.includes(rt) && !projectAdminResourceTypes.includes(rt)
-      );
-    }
+    countedResourceTypes ??= getResourceTypes().filter(
+      (rt) => !protectedResourceTypes.includes(rt) && !projectAdminResourceTypes.includes(rt)
+    );
 
     let currentStatus = await this.limiter.get(this.projectKey);
     if (!currentStatus) {
