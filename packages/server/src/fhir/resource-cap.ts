@@ -79,6 +79,9 @@ export class ResourceCap {
       const result = await this.limiter.consume(this.projectKey, points);
       this.setState(result);
     } catch (err: unknown) {
+      // Give back the point consumed when attempting to create a resource, since it didn't get created
+      await this.limiter.reward(this.projectKey, 1);
+
       if (err instanceof Error && this.enabled) {
         throw err;
       }
