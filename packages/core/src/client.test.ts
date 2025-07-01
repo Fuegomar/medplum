@@ -1310,19 +1310,12 @@ describe('Client', () => {
     const fetch = mockFetch(200, {});
     const client = new MedplumClient({ fetch });
 
-    try {
-      await client.readResource('Patient', '');
-      throw new Error('Test failed: Expected an error when calling readResource with an empty string id.');
-    } catch (err) {
-      expect((err as Error).message).toBe('The "id" parameter cannot be null, undefined, or an empty string.');
-    }
-
-    try {
-      await client.readResource('Patient', undefined as unknown as string);
-      throw new Error('Test failed: Expected an error when calling readResource with an undefined id.');
-    } catch (err) {
-      expect((err as Error).message).toBe('The "id" parameter cannot be null, undefined, or an empty string.');
-    }
+    expect(() => client.readResource('Patient', '')).toThrow(
+      'The "id" parameter cannot be null, undefined, or an empty string.'
+    );
+    expect(() => client.readResource('Patient', undefined as unknown as string)).toThrow(
+      'The "id" parameter cannot be null, undefined, or an empty string.'
+    );
   });
 
   test('Read reference', async () => {
@@ -2640,6 +2633,34 @@ describe('Client', () => {
     );
   });
 
+  test('Push to agent -- waitForResponse, waitTimeout configured', async () => {
+    const fetch = mockFetch(200, {});
+    const client = new MedplumClient({ fetch });
+    const result = await client.pushToAgent(
+      { resourceType: 'Agent', id: '123' },
+      { resourceType: 'Device', id: '456' },
+      'XYZ',
+      ContentType.HL7_V2,
+      true,
+      { waitTimeout: 20000 }
+    );
+    expect(result).toBeDefined();
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.medplum.com/fhir/R4/Agent/123/$push',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Accept: DEFAULT_ACCEPT,
+          'Content-Type': ContentType.FHIR_JSON,
+          'X-Medplum': 'extended',
+        },
+        body: expect.stringMatching(
+          /.+"destination":".+"body":"XYZ".+"contentType":"x-application\/hl7-v2\+er7".+"waitForResponse":true.+"waitTimeout":20000.+/
+        ),
+      })
+    );
+  });
+
   test('Storage events', async () => {
     // Make window.location writeable
     Object.defineProperty(window, 'location', {
@@ -2937,15 +2958,13 @@ describe('Client', () => {
       }),
       autoBatchTime: 100,
     });
-    try {
+
+    await expect(async () => {
       // Start multiple requests to force a batch
       const patientPromise = medplum.readResource('Patient', '123');
       await medplum.readResource('Patient', '9999999-does-not-exist');
       await patientPromise;
-      throw new Error('Expected error');
-    } catch (err) {
-      expect((err as OperationOutcomeError).outcome).toMatchObject(notFound);
-    }
+    }).rejects.toThrow('Not found');
   });
 
   test('Retry on 500', async () => {

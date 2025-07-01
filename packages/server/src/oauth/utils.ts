@@ -8,7 +8,6 @@ import {
   getReferenceString,
   isJwt,
   isString,
-  MEDPLUM_CLI_CLIENT_ID,
   OperationOutcomeError,
   Operator,
   parseJWTPayload,
@@ -55,6 +54,7 @@ import {
   LoginEvent,
   UserAuthenticationEvent,
 } from '../util/auditevent';
+import { getStandardClientById } from './clients';
 import {
   generateAccessToken,
   generateIdToken,
@@ -134,13 +134,9 @@ export interface GoogleCredentialClaims extends JWTPayload {
  * @returns The client application.
  */
 export async function getClientApplication(clientId: string): Promise<ClientApplication> {
-  if (clientId === MEDPLUM_CLI_CLIENT_ID) {
-    return {
-      resourceType: 'ClientApplication',
-      id: MEDPLUM_CLI_CLIENT_ID,
-      redirectUri: 'http://localhost:9615',
-      pkceOptional: true,
-    };
+  const standardClient = getStandardClientById(clientId);
+  if (standardClient) {
+    return standardClient;
   }
   const systemRepo = getSystemRepo();
   return systemRepo.readResource<ClientApplication>('ClientApplication', clientId);
@@ -797,6 +793,11 @@ export async function getExternalUserInfo(
   idp?: IdentityProvider
 ): Promise<Record<string, unknown>> {
   const log = getLogger();
+  if (!userInfoUrl.startsWith('http:') && !userInfoUrl.startsWith('https:')) {
+    log.warn('Invalid user info URL', { userInfoUrl, clientId: idp?.clientId });
+    throw new OperationOutcomeError(badRequest('Invalid user info URL - check your identity provider configuration'));
+  }
+
   let response;
   try {
     response = await fetch(userInfoUrl, {
@@ -821,24 +822,19 @@ export async function getExternalUserInfo(
     throw new OperationOutcomeError(badRequest('Failed to verify code - check your identity provider configuration'));
   }
 
-  // Make sure content type is json
-  if (!response.headers.get('content-type')?.includes(ContentType.JSON)) {
-    let text = '';
-    try {
-      text = await response.text();
-    } catch (err: any) {
-      log.debug('Failed to get response text', err);
-    }
-    log.warn('Failed to verify external authorization code, non-JSON response', { text });
-    throw new OperationOutcomeError(badRequest('Failed to verify code - check your identity provider configuration'));
-  }
-
+  const contentType = response.headers.get('content-type');
   try {
-    return await response.json();
+    if (contentType?.includes(ContentType.JSON)) {
+      return await response.json();
+    } else if (contentType?.includes(ContentType.JWT)) {
+      return parseJWTPayload(await response.text());
+    }
   } catch (err: any) {
     log.warn('Failed to verify external authorization code', err);
     throw new OperationOutcomeError(badRequest('Failed to verify code - check your identity provider configuration'));
   }
+
+  throw new OperationOutcomeError(badRequest(`Failed to verify code - unsupported content type: ${contentType}`));
 }
 
 interface ValidationAssertion {
@@ -908,7 +904,7 @@ export async function getLoginForAccessToken(
   const membership = await systemRepo.readReference<ProjectMembership>(login.membership);
   const project = await systemRepo.readReference<Project>(membership.project as Reference<Project>);
   const userConfig = await getUserConfiguration(systemRepo, project, membership);
-  const authState = { login, project, membership, userConfig };
+  const authState = { login, project, membership, userConfig, accessToken };
   await tryAddOnBehalfOf(req, authState);
   return authState;
 }
