@@ -79,13 +79,22 @@ export class ResourceCap {
       const result = await this.limiter.consume(this.projectKey, points);
       this.setState(result);
     } catch (err: unknown) {
-      // Give back the point consumed when attempting to create a resource, since it didn't get created
-      await this.limiter.reward(this.projectKey, 1);
+      if (err instanceof Error) {
+        this.logger.error('Error updating resource cap', err);
 
-      if (err instanceof Error && this.enabled) {
+        if (!this.enabled) {
+          return;
+        }
         throw err;
+      } else if (!(err instanceof RateLimiterRes)) {
+        this.logger.error('Unhandled resource cap response', { response: JSON.stringify(err) });
+        return;
       }
-      const result = err as RateLimiterRes;
+      const result: RateLimiterRes = err;
+
+      // Give back the point consumed when attempting to create a resource, since it didn't get created
+      await this.limiter.reward(this.projectKey, points);
+
       this.setState(result);
       this.logger.warn('Resource cap exceeded', {
         limit: this.limiter.points,
