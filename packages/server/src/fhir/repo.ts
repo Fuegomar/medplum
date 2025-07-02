@@ -202,6 +202,8 @@ export interface RepositoryContext {
    * 3) "compartment" - References to all compartments the resource is in.
    */
   extendedMode?: boolean;
+
+  shardName: string;
 }
 
 export interface CacheEntry<T extends Resource = Resource> {
@@ -278,6 +280,10 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
 
   currentProject(): WithId<Project> | undefined {
     return this.context.currentProject;
+  }
+
+  get shardName(): string {
+    return this.context.shardName;
   }
 
   /**
@@ -2382,7 +2388,7 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
   private async getConnection(mode: DatabaseMode): Promise<PoolClient> {
     this.assertNotClosed();
     if (!this.conn) {
-      this.conn = await getDatabasePool(mode).connect();
+      this.conn = await getDatabasePool(mode, this.shardName).connect();
     }
     return this.conn;
   }
@@ -2737,17 +2743,15 @@ function getProfileCacheKey(projectId: string, url: string): string {
   return `Project/${projectId}/StructureDefinition/${url}`;
 }
 
-export async function getGlobalSystemRepo(): Promise<Repository> {
-  const conn = await getDatabasePool(DatabaseMode.WRITER).connect();
-  return getSystemRepo(conn);
+export function getGlobalSystemRepo(conn?: PoolClient): Repository {
+  return getSystemRepo(conn, 'global');
 }
 
-export async function getShardSystemRepo(shardName: string): Promise<Repository> {
-  const conn = await getDatabasePool(DatabaseMode.WRITER, shardName).connect();
-  return getSystemRepo(conn);
+export function getShardSystemRepo(shardName: string, conn?: PoolClient): Repository {
+  return getSystemRepo(conn, shardName);
 }
 
-export function getSystemRepo(conn?: PoolClient): Repository {
+export function getSystemRepo(conn?: PoolClient, sharedName?: string): Repository {
   return new Repository(
     {
       superAdmin: true,
@@ -2756,6 +2760,7 @@ export function getSystemRepo(conn?: PoolClient): Repository {
       author: {
         reference: 'system',
       },
+      shardName: sharedName ?? 'global',
       // System repo does not have an associated Project; it can write to any
     },
     conn

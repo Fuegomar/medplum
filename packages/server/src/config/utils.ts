@@ -1,5 +1,6 @@
 import { concatUrls } from '@medplum/core';
-import { MedplumServerConfig } from './types';
+import { getConfig } from './loader';
+import { MedplumServerConfig, MedplumShardConfig } from './types';
 
 const DEFAULT_AWS_REGION = 'us-east-1';
 
@@ -115,4 +116,9 @@ export function isBooleanConfig(key: string): boolean {
 
 export function isObjectConfig(key: string): boolean {
   return key === 'tls' || key === 'ssl' || key === 'defaultProjectSystemSetting' || key === 'defaultOAuthClients';
+}
+
+export function getShardConfig(shardName: string): MedplumShardConfig | undefined {
+  const config = getConfig();
+  return config.shards[shardName];
 }

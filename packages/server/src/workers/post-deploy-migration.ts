@@ -4,7 +4,7 @@ import { Job, JobsOptions, Queue, QueueBaseOptions, Worker } from 'bullmq';
 import * as semver from 'semver';
 import { getRequestContext, tryRunInRequestContext } from '../context';
 import { AsyncJobExecutor } from '../fhir/operations/utils/asyncjobexecutor';
-import { getSystemRepo, Repository } from '../fhir/repo';
+import { getShardSystemRepo, Repository } from '../fhir/repo';
 import { globalLogger } from '../logger';
 import {
   CustomPostDeployMigrationJobData,
@@ -79,7 +79,8 @@ export async function isClusterCompatible(migrationNumber: number): Promise<bool
 }
 
 export async function jobProcessor(job: Job<PostDeployJobData>): Promise<void> {
-  const asyncJob = await getSystemRepo().readResource<AsyncJob>('AsyncJob', job.data.asyncJobId);
+  const shardSysRepo = await getShardSystemRepo(job.data.shardName);
+  const asyncJob = await shardSysRepo.readResource<AsyncJob>('AsyncJob', job.data.asyncJobId);
 
   if (!isJobCompatible(asyncJob)) {
     await moveToDelayedAndThrow(job, 'Post-deploy migration delayed since this worker is not compatible');
@@ -95,7 +96,7 @@ export async function jobProcessor(job: Job<PostDeployJobData>): Promise<void> {
   }
 
   if (job.data.type === 'dynamic') {
-    await runDynamicMigration(getSystemRepo(), job as Job<DynamicPostDeployJobData>);
+    await runDynamicMigration(shardSysRepo, job as Job<DynamicPostDeployJobData>);
     return;
   }
 
@@ -128,7 +129,7 @@ export async function jobProcessor(job: Job<PostDeployJobData>): Promise<void> {
     );
   }
 
-  const result: PostDeployJobRunResult = await migration.run(getSystemRepo(), job, job.data);
+  const result: PostDeployJobRunResult = await migration.run(shardSysRepo, job, job.data);
 
   switch (result) {
     case 'ineligible': {

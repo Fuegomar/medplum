@@ -4,6 +4,7 @@ import { DelayedError } from 'bullmq';
 import { Request, Response } from 'express';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getConfig } from '../../../config/loader';
+import { getShardConfig } from '../../../config/utils';
 import { getAuthenticatedContext } from '../../../context';
 import { DatabaseMode, getDatabasePool } from '../../../database';
 import { getLogger } from '../../../logger';
@@ -114,7 +115,11 @@ export class AsyncJobExecutor {
     if (updatedJob.type === 'data-migration' && updatedJob.dataVersion) {
       await markPostDeployMigrationCompleted(getDatabasePool(DatabaseMode.WRITER), updatedJob.dataVersion);
       updatedJob = await repo.updateResource<AsyncJob>(updatedJob);
-      await maybeAutoRunPendingPostDeployMigration();
+      const shardConfig = getShardConfig(repo.shardName);
+      if (!shardConfig) {
+        throw new Error('Shard config not found');
+      }
+      await maybeAutoRunPendingPostDeployMigration(shardConfig);
       return updatedJob;
     } else {
       return repo.updateResource<AsyncJob>(updatedJob);
