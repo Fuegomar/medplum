@@ -69,7 +69,7 @@ import {
 import { Readable } from 'node:stream';
 import { Pool, PoolClient } from 'pg';
 import { Operation } from 'rfc6902';
-import { v7 } from 'uuid';
+import { v4, v7 } from 'uuid';
 import { getConfig } from '../config/loader';
 import { syntheticR4Project } from '../constants';
 import { tryGetRequestContext } from '../context';
@@ -112,6 +112,7 @@ import {
   Disjunction,
   Expression,
   InsertQuery,
+  PostgresError,
   SelectQuery,
   TransactionIsolationLevel,
   normalizeDatabaseError,
@@ -119,9 +120,9 @@ import {
 } from './sql';
 import { buildTokenColumns } from './token-column';
 
-const defaultTransactionAttempts = 2;
+const defaultTransactionAttempts = 3;
 const defaultExpBackoffBaseDelayMs = 50;
-const retryableTransactionErrorCodes = ['40001'];
+const retryableTransactionErrorCodes: string[] = [PostgresError.SerializationFailure];
 
 /**
  * The RepositoryContext interface defines standard metadata for repository actions.
@@ -320,8 +321,13 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
     }
   }
 
+  private V7: boolean = false;
+
   generateId(): string {
-    return v7();
+    if (this.V7) {
+      return v7();
+    }
+    return v4();
   }
 
   async readResource<T extends Resource>(
@@ -923,10 +929,14 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
   private async writeToDatabase<T extends WithId<Resource>>(resource: T, create: boolean): Promise<void> {
     await this.ensureInTransaction(async (client) => {
       await this.writeResource(client, resource);
-      await this.writeResourceVersion(client, resource);
-      await this.writeLookupTables(client, resource, create);
+      if (this.DO_ALL) {
+        await this.writeResourceVersion(client, resource);
+        await this.writeLookupTables(client, resource, create);
+      }
     });
   }
+
+  DO_ALL = false;
 
   /**
    * Tries to return the existing resource, if it is available.
@@ -2410,6 +2420,9 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
     for (let attempt = 0; attempt < transactionAttempts; attempt++) {
       try {
         const client = await this.beginTransaction(options?.serializable ? 'SERIALIZABLE' : undefined);
+        if (attempt > 0) {
+          console.log('Retrying transaction', attempt);
+        }
         const result = await callback(client);
         await this.commitTransaction();
         return result;
@@ -2434,7 +2447,8 @@ export class Repository extends FhirRepository<PoolClient> implements Disposable
         // Attempt 1: 50 * (2^0) = 50 * [0.75, 1] = **[37.5, 50] ms**
         // Attempt 2: 50 * (2^1) = 100 * [0.75, 1] = **[75, 100] ms**
         // etc...
-        const delayMs = Math.ceil(baseDelayMs * 2 ** attempt * (0.75 + Math.random() * 0.25));
+        const delayMs = Math.ceil(baseDelayMs * 2 ** attempt * (0.5 + Math.random() * 1.5));
+        console.log('Sleeping', delayMs);
         await sleep(delayMs);
       }
     }

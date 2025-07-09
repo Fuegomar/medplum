@@ -1074,6 +1074,8 @@ function trySpecialSearchParameter(
           return new Condition(new Column(table, 'projectId'), filter.value === 'true' ? '=' : '!=', null);
         } else if (filter.operator === Operator.PRESENT) {
           return new Condition(new Column(table, 'projectId'), filter.value === 'true' ? '!=' : '=', null);
+        } else if (filter.operator === Operator.EQUALS) {
+          return new Condition(new Column(table, 'projectId'), '=', filter.value);
         }
       }
 

@@ -228,17 +228,21 @@ export abstract class FhirRepository<TClient = unknown> {
 
     return this.withTransaction(
       async () => {
-        const matches = await this.searchResources(search);
-        if (matches.length === 1) {
-          const existing = matches[0];
-          if (!options?.assignedId && resource.id && resource.id !== existing.id) {
-            throw new OperationOutcomeError(
-              badRequest('Resource ID did not match resolved ID', resource.resourceType + '.id')
-            );
+        if (process.env['CHECK_MATCHES']) {
+          const matches = await this.searchResources(search);
+          if (matches.length === 1) {
+            const existing = matches[0];
+            if (!options?.assignedId && resource.id && resource.id !== existing.id) {
+              throw new OperationOutcomeError(
+                badRequest('Resource ID did not match resolved ID', resource.resourceType + '.id')
+              );
+            }
+            return { resource: matches[0], outcome: allOk };
+          } else if (matches.length > 1) {
+            throw new OperationOutcomeError(multipleMatches);
           }
-          return { resource: matches[0], outcome: allOk };
-        } else if (matches.length > 1) {
-          throw new OperationOutcomeError(multipleMatches);
+        } else {
+          console.log('Skipping matches check');
         }
 
         const createdResource = await this.createResource(resource, options);

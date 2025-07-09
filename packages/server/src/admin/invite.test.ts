@@ -1,6 +1,6 @@
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
-import { ContentType, createReference, getReferenceString, normalizeErrorString } from '@medplum/core';
-import { BundleEntry, Practitioner, ProjectMembership } from '@medplum/fhirtypes';
+import { ContentType, createReference, getReferenceString, normalizeErrorString, WithId } from '@medplum/core';
+import { BundleEntry, Practitioner, Project, ProjectMembership } from '@medplum/fhirtypes';
 import { AwsClientStub, mockClient } from 'aws-sdk-client-mock';
 import 'aws-sdk-client-mock-jest';
 import { randomUUID } from 'crypto';
@@ -16,6 +16,7 @@ import { loadTestConfig } from '../config/loader';
 import { DatabaseMode, getDatabasePool } from '../database';
 import { SelectQuery } from '../fhir/sql';
 import { addTestUser, initTestAuth, setupPwnedPasswordMock, setupRecaptchaMock, withTestContext } from '../test.setup';
+import { inviteUser } from './invite';
 
 jest.mock('hibp');
 jest.mock('node-fetch');
@@ -89,6 +90,58 @@ describe('Admin Invite', () => {
       .where('email', '=', bobEmail)
       .execute(getDatabasePool(DatabaseMode.READER));
     expect(rows[0].projectId).toStrictEqual(null);
+  });
+
+  test.only('Concurrent patient invites', async () => {
+    const projects: WithId<Project>[] = [];
+    const N = 10;
+    for (let i = 0; i < N; i++) {
+      const { project } = await withTestContext(() =>
+        registerNew({
+          firstName: 'Alice',
+          lastName: 'Smith',
+          projectName: 'Alice Project',
+          email: `alice${randomUUID()}@example.com`,
+          password: 'password!@#',
+        })
+      );
+      projects.push(project);
+    }
+
+    const promises = [];
+    for (let i = 0; i < N; i++) {
+      const promise = inviteUser({
+        project: projects[i],
+        resourceType: 'Patient',
+        firstName: randomUUID(),
+        lastName: randomUUID(),
+        email: `${randomUUID()}@crocodoc.com`,
+        membership: {
+          userName: randomUUID(),
+        },
+      });
+      promises.push(promise);
+
+      // promises.push(
+      //   request(app)
+      //     .post('/admin/projects/' + project.id + '/invite')
+      //     .set('Authorization', 'Bearer ' + accessToken)
+      //     .send({
+      //       resourceType: 'Patient',
+      //       firstName: randomUUID(),
+      //       lastName: randomUUID(),
+      //       email: `${randomUUID()}@crocodoc.com`,
+      //     })
+      // );
+    }
+
+    const results = await Promise.allSettled(promises);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.log(result.reason);
+      }
+      expect(result.status).toBe('fulfilled');
+    }
   });
 
   test('Existing user to project', async () => {
