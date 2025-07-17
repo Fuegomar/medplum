@@ -1,0 +1,18 @@
+nohup: ignoring input
+
+> @medplum/server@4.3.4 dev
+> ts-node-dev --poll --respawn --transpile-only --require ./src/otel/instrumentation.ts src/index.ts
+
+[INFO] 12:29:24 ts-node-dev ver. 2.0.0 (using ts-node ver. 10.9.2, typescript ver. 5.8.3)
+{"level":"INFO","timestamp":"2025-07-16T18:29:38.253Z","msg":"Starting Medplum Server...","configName":"file:medplum.config.json","version":"4.3.4"}
+SyntaxError: Expected ',' or '}' after property value in JSON at position 43 (line 3 column 3)
+    at JSON.parse (<anonymous>)
+    at loadFileConfig (/home/marley/DripBox/medplum/packages/server/src/config/loader.ts:147:15)
+    at loadConfig (/home/marley/DripBox/medplum/packages/server/src/config/loader.ts:40:22)
+    at main (/home/marley/DripBox/medplum/packages/server/src/index.ts:35:34)
+    at Object.<anonymous> (/home/marley/DripBox/medplum/packages/server/src/index.ts:58:3)
+    at Module.<anonymous> (node:internal/modules/cjs/loader:1730:14)
+    at Module._compile (/home/marley/DripBox/medplum/node_modules/source-map-support/source-map-support.js:521:25)
+    at Module.m._compile (/tmp/ts-node-dev-hook-45279900126685213.js:69:33)
+    at node:internal/modules/cjs/loader:1895:10
+    at require.extensions..jsx.require.extensions..js (/tmp/ts-node-dev-hook-45279900126685213.js:114:20)
