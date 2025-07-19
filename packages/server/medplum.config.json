@@ -7,10 +7,7 @@
     "host": "localhost",
     "port": 1025,
     "secure": false,
-    "ignoreTLS": true,
-    "auth": {
-      "user": "dummy",
-      "pass": "dummy"}
+    "ignoreTLS": true
 },
   "binaryStorage": "file:./binary/",
   "storageBaseUrl": "http://localhost:8103/storage/",
