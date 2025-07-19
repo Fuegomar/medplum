@@ -6,13 +6,19 @@ import { loadAwsConfig } from '../cloud/aws/config';
 import { loadAzureConfig } from '../cloud/azure/config';
 import { loadGcpConfig } from '../cloud/gcp/config';
 import { MedplumServerConfig } from './types';
-import { addDefaults, isBooleanConfig, isFloatConfig, isIntegerConfig, isObjectConfig, ServerConfig } from './utils';
+import {
+  addDefaults,
+  isBooleanConfig,
+  isFloatConfig,
+  isIntegerConfig,
+  isObjectConfig,
+  ServerConfig,
+} from './utils';
 
-let cachedConfig: ServerConfig | undefined = undefined;
+let cachedConfig: ServerConfig | undefined;
 
 /**
- * Returns the server configuration settings.
- * @returns The server configuration settings.
+ * Returns the loaded and merged server configuration.
  */
 export function getConfig(): ServerConfig {
   if (!cachedConfig) {
@@ -22,16 +28,15 @@ export function getConfig(): ServerConfig {
 }
 
 /**
- * Loads configuration settings from a config identifier.
- * The identifier must start with one of the following prefixes:
- *   1) "file:" string followed by relative path.
- *   2) "aws:" followed by AWS SSM path prefix.
- * @param configName - The medplum config identifier.
- * @returns The loaded configuration.
+ * Loads configuration settings based on the configName identifier.
+ * Supports file:, env:, aws:, gcp:, azure: prefixes.
  */
-export async function loadConfig(configName: string): Promise<MedplumServerConfig> {
+export async function loadConfig(
+  configName: string
+): Promise<MedplumServerConfig> {
   const [configType, configPath] = splitN(configName, ':', 2);
   let config: MedplumServerConfig;
+
   switch (configType) {
     case 'env':
       config = loadEnvConfig();
@@ -52,57 +57,70 @@ export async function loadConfig(configName: string): Promise<MedplumServerConfi
       throw new Error('Unrecognized config type: ' + configType);
   }
 
-  if (!config.baseUrl || typeof config.baseUrl !== 'string' || config.baseUrl.trim() === '') {
-    throw new Error('Missing required config setting: baseUrl. Please set "baseUrl" in your configuration.');
+  // Validate required baseUrl
+  if (!config.baseUrl || typeof config.baseUrl !== 'string' || !config.baseUrl.trim()) {
+    throw new Error(
+      'Missing required config setting: baseUrl. Please set "baseUrl" in your configuration.'
+    );
   }
 
+  // Merge defaults
   cachedConfig = addDefaults(config);
   return cachedConfig;
 }
 
 /**
- * Loads the configuration setting for unit and integration tests.
- * @returns The configuration for tests.
+ * Loads configuration settings for tests.
  */
 export async function loadTestConfig(): Promise<MedplumServerConfig> {
   const config = await loadConfig('file:medplum.config.json');
+
+  // Configure binary storage as temp dir
   config.binaryStorage = 'file:' + mkdtempSync(join(tmpdir(), 'medplum-temp-storage'));
   config.allowedOrigins = undefined;
+
+  // Override database for tests
   config.database.host = process.env['POSTGRES_HOST'] ?? 'localhost';
-  config.database.port = process.env['POSTGRES_PORT'] ? Number.parseInt(process.env['POSTGRES_PORT'], 10) : 5432;
+  config.database.port = process.env['POSTGRES_PORT']
+    ? parseInt(process.env['POSTGRES_PORT'], 10)
+    : 5432;
   config.database.dbname = 'medplum_test';
   config.database.runMigrations = false;
   config.database.disableRunPostDeployMigrations = true;
+
+  // Readonly DB config
   config.readonlyDatabase = {
     ...config.database,
     username: 'medplum_test_readonly',
     password: 'medplum_test_readonly',
   };
-  config.redis.db = 7; // Select logical DB `7` so we don't collide with existing dev Redis cache.
-  config.redis.password = process.env['REDIS_PASSWORD_DISABLED_IN_TESTS'] ? undefined : config.redis.password;
+
+  // Redis test DB
+  config.redis.db = 7;
+  config.redis.password =
+    process.env['REDIS_PASSWORD_DISABLED_IN_TESTS'] === 'true'
+      ? undefined
+      : config.redis.password;
+
   config.approvedSenderEmails = 'no-reply@example.com';
   config.emailProvider = 'none';
   config.logLevel = 'error';
-  config.defaultRateLimit = -1; // Disable rate limiter by default in tests
+  config.defaultRateLimit = -1;
+
   return config;
 }
 
 /**
- * Loads configuration settings from environment variables.
- * Environment variables names are prefixed with "MEDPLUM_".
- * For example, "MEDPLUM_PORT" will set the "port" config setting.
- * @returns The configuration.
+ * Loads overrides from environment variables prefixed with MEDPLUM_.
  */
 function loadEnvConfig(): MedplumServerConfig {
   const config: Record<string, any> = {};
-  // Iterate over all environment variables
+
   for (const [name, value] of Object.entries(process.env)) {
-    if (!name.startsWith('MEDPLUM_')) {
-      continue;
-    }
+    if (!name.startsWith('MEDPLUM_')) continue;
 
     let key = name.substring('MEDPLUM_'.length);
-    let currConfig = config;
+    let currConfig: any = config;
 
     if (key.startsWith('DATABASE_')) {
       key = key.substring('DATABASE_'.length);
@@ -116,11 +134,15 @@ function loadEnvConfig(): MedplumServerConfig {
     } else if (key.startsWith('FISSION_')) {
       key = key.substring('FISSION_'.length);
       currConfig = config.fission = config.fission ?? {};
+    } else {
+      // Unknown MEDPLUM_ prefix skips
+      continue;
     }
 
-    // Convert key from CAPITAL_CASE to camelCase
-    key = key.toLowerCase().replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+    // Convert to camelCase
+    key = key.toLowerCase().replace(/_([a-z])/g, (_, g1) => g1.toUpperCase());
 
+    // Parse types
     if (isIntegerConfig(key)) {
       currConfig[key] = parseInt(value ?? '', 10);
     } else if (isFloatConfig(key)) {
@@ -138,11 +160,30 @@ function loadEnvConfig(): MedplumServerConfig {
 }
 
 /**
- * Loads configuration settings from a JSON file.
- * Path relative to the current working directory at runtime.
- * @param path - The config file path.
- * @returns The configuration.
+ * Loads JSON config from file and applies MailHog workaround.
  */
-async function loadFileConfig(path: string): Promise<MedplumServerConfig> {
-  return JSON.parse(readFileSync(resolve(__dirname, '../../', path), { encoding: 'utf8' }));
+async function loadFileConfig(
+  pathStr: string
+): Promise<MedplumServerConfig> {
+  const filePath = resolve(__dirname, '../../', pathStr);
+  let raw: string;
+  try {
+    raw = readFileSync(filePath, { encoding: 'utf8' });
+  } catch (err) {
+    throw new Error(`Cannot read config file at ${filePath}: ${err}`);
+  }
+
+  let config: MedplumServerConfig;
+  try {
+    config = JSON.parse(raw) as MedplumServerConfig;
+  } catch (err) {
+    throw new Error(`Error parsing JSON in ${filePath}: ${err}`);
+  }
+
+  // Workaround: strip auth when using MailHog on localhost
+  if (config.smtp && config.smtp.host === 'localhost') {
+    delete (config.smtp as any).auth;
+  }
+
+  return config;
 }
