@@ -6,6 +6,14 @@
     "packages/*",
     "examples/*"
   ],
+    "supportEmail": "support@dripbox.net",
+
+  "smtp": {
+    "host": "127.0.0.1",
+    "port": 8025,
+    "username": "",
+    "password": ""
+  },
   "scripts": {
     "build": "turbo run build --filter=!@medplum/docs --filter=!./examples/*",
     "build:all": "turbo run build",

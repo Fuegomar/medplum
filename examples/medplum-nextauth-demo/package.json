@@ -15,9 +15,7 @@
     "trailingComma": "es5"
   },
   "eslintConfig": {
-    "extends": [
-      "@medplum/eslint-config"
-    ]
+    "extends": "@medplum/eslint-config"
   },
   "dependencies": {
     "@mantine/core": "7.17.8",
