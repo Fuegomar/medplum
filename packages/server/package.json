@@ -15,6 +15,7 @@
   "author": "Medplum <hello@medplum.com>",
   "scripts": {
     "build": "npm run clean && tsc && tsc --project tsconfig.build.json",
+    "build:all": "npm run build --workspace @medplum/server && npm run build --workspace @medplum/app",
     "circular": "npx madge --circular dist/index.js",
     "clean": "rimraf dist",
     "dev": "ts-node-dev --poll --respawn --transpile-only --require ./src/otel/instrumentation.ts src/index.ts",
